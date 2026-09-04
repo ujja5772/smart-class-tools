@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title id="pageTitleTag">여름방학 이야기 뽑기 슬롯 — 5학년 영어 대화 연습</title>
+<title id="pageTitleTag"> 5학년 영어 대화 연습 - 과거 이야기하기 </title>
 <style>
   :root{
     --ink:#22314D;
@@ -82,12 +82,15 @@
   .reel-mini-btn:active:not(:disabled){transform:translateY(1px);}
 
   /* ---- spin button ---- */
-  .spin-wrap{display:flex;justify-content:center;}
+  .spin-wrap{display:flex;justify-content:center;align-items:center;gap:14px;}
   #btnSpin{font-family:inherit;font-size:clamp(19px,2.6vw,26px);font-weight:900;padding:18px 54px;
     border-radius:20px;border:3px solid var(--ink);cursor:pointer;background:var(--coral);color:#fff;
     box-shadow:5px 5px 0 rgba(34,49,77,0.18);transition:transform .08s ease, box-shadow .08s ease;}
   #btnSpin:active{transform:translate(2px,2px);box-shadow:3px 3px 0 rgba(34,49,77,0.18);}
   #btnSpin:disabled{opacity:0.45;cursor:not-allowed;}
+  #btnSound{width:52px;height:52px;border-radius:50%;border:3px solid var(--ink);background:var(--panel);
+    font-size:22px;cursor:pointer;box-shadow:3px 3px 0 rgba(34,49,77,0.18);flex:0 0 auto;}
+  #btnSound:active{transform:translate(1px,1px);}
 
   /* ---- conversation card ---- */
   .convo{display:none;width:100%;max-width:900px;background:var(--panel);border:var(--border);
@@ -198,6 +201,7 @@
 
   <div class="spin-wrap">
     <button id="btnSpin">🎰 뽑기!</button>
+    <button id="btnSound" title="효과음 켜기/끄기">🔊</button>
   </div>
 
   <div class="convo" id="convo">
@@ -218,7 +222,7 @@
   </div>
 </main>
 
-<footer>초등학교 영어 말하기 대화 연습 카드 · 전자칠판용 · 오프라인 실행 가능 · ⚙️ 우측 하단 버튼에서 선생님이 내용을 편집할 수 있어요</footer>
+<footer>초등학교 영어 말하기 대화 연습 카드 · 전자칠판용 · 오프라인 실행 가능 · ⚙️ 우측 하단 버튼에서 선생님이 내용을 편집할 수 있어요<br>Made by Tr. Olivia</footer>
 
 <button class="admin-fab" id="btnAdminOpen" title="교사 설정">⚙️</button>
 
@@ -402,6 +406,71 @@ function escapeHtml(s){
   return String(s==null?"":s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 function rand(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+
+// ---- avoid repeating the item that was just shown in the same slot ----
+let lastPicked = {};
+function pickDifferent(pool, exclude){
+  if (pool.length <= 1) return rand(pool);
+  const filtered = exclude ? pool.filter(it => it !== exclude) : pool;
+  return rand(filtered.length ? filtered : pool);
+}
+
+// ---- tiny synthesized slot-machine sound (no external audio files, works offline) ----
+let soundOn = true;
+let audioCtx = null;
+function getAudioCtx(){
+  if (!audioCtx){
+    try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ audioCtx = null; }
+  }
+  return audioCtx;
+}
+// ---- retro arcade beeps (classic chiptune square-wave style) ----
+let tickToggle = 0;
+function playTick(progress){
+  if (!soundOn) return;
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  if (ctx.state === "suspended") ctx.resume();
+  const p = typeof progress === "number" ? progress : Math.random();
+  // alternate between two 8-bit-style notes, climbing a step as it nears the stop
+  const notes = p < 0.6 ? [659.25, 783.99] : [880.00, 1046.50]; // E5/G5 -> A5/C6
+  tickToggle = 1 - tickToggle;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "square";
+  osc.frequency.value = notes[tickToggle];
+  osc.connect(gain); gain.connect(ctx.destination);
+  const now = ctx.currentTime;
+  gain.gain.setValueAtTime(0.08, now);
+  gain.gain.setValueAtTime(0.08, now + 0.025);
+  gain.gain.linearRampToValueAtTime(0.0001, now + 0.04);
+  osc.start(now);
+  osc.stop(now + 0.045);
+}
+function playStop(){
+  if (!soundOn) return;
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  if (ctx.state === "suspended") ctx.resume();
+  const now = ctx.currentTime;
+  // classic arcade "coin / power-up" ascending arpeggio
+  const notes = [1046.50, 1318.51, 1567.98, 2093.00]; // C6 E6 G6 C7
+  notes.forEach((freq, i) => {
+    const startAt = now + i*0.055;
+    const dur = i === notes.length - 1 ? 0.16 : 0.07;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "square";
+    osc.frequency.value = freq;
+    osc.connect(gain); gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(0.09, startAt);
+    gain.gain.setValueAtTime(0.09, startAt + dur*0.6);
+    gain.gain.linearRampToValueAtTime(0.0001, startAt + dur);
+    osc.start(startAt);
+    osc.stop(startAt + dur + 0.02);
+  });
+}
+
 function substitute(template, replacer){
   return String(template||"").replace(/\{\{(\w+)\}\}/g, (m,key) => replacer(key));
 }
@@ -413,6 +482,7 @@ function renderApp(){
   renderFrameBox();
   renderReels();
   current = {};
+  lastPicked = {};
   answerRevealed = false;
   document.getElementById("convo").classList.remove("show");
 }
@@ -480,16 +550,18 @@ function spinOne(key, duration, onDone){
     onDone && onDone(null);
     return;
   }
-  const finalValue = rand(pool);
+  const finalValue = pickDifferent(pool, lastPicked[key]);
   win.classList.add("spinning");
   let elapsed = 0, delay = 60;
   function step(){
     win.innerHTML = renderSlotContent(key, rand(pool));
+    playTick(elapsed / duration);
     elapsed += delay; delay += 14;
     if (elapsed < duration){ setTimeout(step, delay); }
     else{
       win.innerHTML = renderSlotContent(key, finalValue);
       win.classList.remove("spinning");
+      playStop();
       onDone && onDone(finalValue);
     }
   }
@@ -516,6 +588,7 @@ function spinAll(){
   order.forEach((key,i)=>{
     spinOne(key, 700 + i*300, (val)=>{
       current[key] = val;
+      lastPicked[key] = val;
       doneCount++;
       if (doneCount === order.length){
         spinningLock = false;
@@ -534,6 +607,7 @@ function spinSingle(key){
   setMiniBtns(false);
   spinOne(key, 700, (val)=>{
     current[key] = val;
+    lastPicked[key] = val;
     spinningLock = false;
     document.getElementById("btnSpin").disabled = false;
     setMiniBtns(true);
@@ -580,6 +654,11 @@ function updateConvo(){
 
 // ---------------- student-facing events ----------------
 document.getElementById("btnSpin").addEventListener("click", spinAll);
+document.getElementById("btnSound").addEventListener("click", (e) => {
+  soundOn = !soundOn;
+  e.currentTarget.textContent = soundOn ? "🔊" : "🔇";
+  if (soundOn) getAudioCtx();
+});
 document.getElementById("btnHint").addEventListener("click", () => {
   hintShown = !hintShown;
   const btn = document.getElementById("btnHint");
