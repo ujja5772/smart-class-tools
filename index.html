@@ -130,6 +130,12 @@
     box-shadow:3px 3px 0 rgba(34,49,77,0.2);}
   .admin-fab:active{transform:translate(1px,1px);}
 
+  .page-toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:1800;
+    background:var(--yellow);border:3px solid var(--ink);border-radius:14px;padding:10px 22px;
+    font-weight:800;font-size:clamp(12.5px,1.5vw,15px);box-shadow:4px 4px 0 rgba(34,49,77,0.18);
+    max-width:90vw;text-align:center;}
+  .page-toast.hidden{display:none;}
+
   /* ---- modal ---- */
   .modal-overlay{position:fixed;inset:0;background:rgba(20,24,36,0.55);z-index:2000;
     display:flex;align-items:center;justify-content:center;padding:16px;}
@@ -223,6 +229,8 @@
 </main>
 
 <footer>초등학교 영어 말하기 대화 연습 카드 · 전자칠판용 · 오프라인 실행 가능 · ⚙️ 우측 하단 버튼에서 선생님이 내용을 편집할 수 있어요<br>Made by Tr. Olivia</footer>
+
+<div class="page-toast hidden" id="pageToast"></div>
 
 <button class="admin-fab" id="btnAdminOpen" title="교사 설정">⚙️</button>
 
@@ -949,7 +957,45 @@ document.getElementById("importFile").addEventListener("change", (e) => {
 });
 
 // ---------------- init ----------------
-renderApp();
+function showPageToast(msg){
+  const t = document.getElementById("pageToast");
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.remove("hidden");
+  clearTimeout(showPageToast._timer);
+  showPageToast._timer = setTimeout(()=>{ t.classList.add("hidden"); }, 5000);
+}
+
+// If the page URL has ?config=<파일주소>, fetch that config file and use it for
+// this visit automatically — so a shared link can open a specific unit directly,
+// with no manual "불러오기" click needed. Falls back to the saved/default config
+// on any error (missing file, bad format, blocked request, etc).
+async function tryLoadFromUrlParam(){
+  let configUrl;
+  try{
+    configUrl = new URLSearchParams(location.search).get("config");
+  }catch(e){ return false; }
+  if (!configUrl) return false;
+  try{
+    const res = await fetch(configUrl, {cache:"no-store"});
+    if (!res.ok) throw new Error("파일을 찾을 수 없어요 (" + res.status + ")");
+    const text = await res.text();
+    const parsed = JSON.parse(text);
+    if (!parsed.lines || !parsed.slots) throw new Error("설정 파일 형식이 올바르지 않아요.");
+    currentConfig = parsed;
+    return true;
+  }catch(e){
+    console.warn("config link load failed:", e);
+    showPageToast("⚠️ 링크로 공유된 설정을 불러오지 못했어요. 기본 내용으로 열었어요.");
+    return false;
+  }
+}
+
+(async function init(){
+  const loadedFromLink = await tryLoadFromUrlParam();
+  renderApp();
+  if (loadedFromLink) showPageToast("🔗 공유 링크로 \"" + currentConfig.title + "\" 단원을 불러왔어요!");
+})();
 </script>
 </body>
 </html>
