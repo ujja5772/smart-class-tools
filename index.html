@@ -915,16 +915,16 @@ document.getElementById("btnResetDefault").addEventListener("click", (e) => {
 });
 
 document.getElementById("btnExport").addEventListener("click", () => {
-  const blob = new Blob([JSON.stringify(workingConfig, null, 2)], {type:"application/json"});
+  const blob = new Blob([JSON.stringify(workingConfig, null, 2)], {type:"text/plain"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "slot-config.json";
+  a.download = "slot-config.txt";
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  showToast("📤 설정 파일을 내려받았어요.");
+  showToast("📤 설정 파일을 내려받았어요. (.txt로 저장돼서 커뮤니티 등에 바로 첨부할 수 있어요)");
 });
 
 document.getElementById("importFile").addEventListener("change", (e) => {
