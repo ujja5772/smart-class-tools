@@ -269,7 +269,7 @@
 
     <div class="edit-section">
       <h4>슬롯 (뽑기 칸) 편집</h4>
-      <div class="modal-hint">슬롯 키는 문장 틀의 &#123;&#123;키&#125;&#125;와 똑같이 맞춰주세요. 영문/숫자로 적어주세요 (예: time, action, feel).</div>
+      <div class="modal-hint">슬롯 키는 문장 틀의 &#123;&#123;키&#125;&#125;와 똑같이 맞춰주세요. 영문/숫자로 적어주세요 (예: time, action, feel).<br>슬롯 키 칸을 직접 고치고 Enter(또는 다른 곳 클릭)를 누르면 <b>문장 틀 안의 &#123;&#123;키&#125;&#125;도 자동으로 같이 바뀌어요.</b></div>
       <div id="slotsEditor"></div>
       <div id="addSlotWrap">
         <button class="small-btn add-slot-btn" id="btnAddSlot">＋ 슬롯 추가</button>
@@ -786,7 +786,7 @@ function renderSlotsEditor(){
     });
     block.innerHTML =
       '<div class="slot-head">'+
-        '<b>슬롯 키: '+escapeHtml(key)+'</b>'+
+        '<label class="slot-key-wrap" title="문장 틀의 {{키}}와 연결되는 이름이에요. 바꾸면 문장 틀도 자동으로 같이 바뀌어요.">슬롯 키 <input type="text" class="slot-key" data-key="'+key+'" value="'+escapeHtml(key)+'" style="max-width:120px;min-width:90px;flex:0 0 auto;font-weight:800;"></label>'+
         '<input type="text" class="slot-label" data-key="'+key+'" placeholder="화면에 보일 이름" value="'+escapeHtml(slot.label||"")+'">'+
         '<label><input type="checkbox" class="slot-hasimage" data-key="'+key+'" '+(slot.hasImage?"checked":"")+'> 이미지</label>'+
         '<label><input type="checkbox" class="slot-hasemoji" data-key="'+key+'" '+(slot.hasEmoji?"checked":"")+'> 이모지</label>'+
@@ -798,6 +798,41 @@ function renderSlotsEditor(){
   });
 
   // slot-level listeners
+  wrap.querySelectorAll(".slot-key").forEach(el => {
+    el.addEventListener("keydown",(e)=>{ if (e.key === "Enter"){ e.preventDefault(); e.target.blur(); } });
+    el.addEventListener("change",(e)=>{
+      const oldKey = e.target.dataset.key;
+      const newKey = e.target.value.trim().replace(/[^a-zA-Z0-9_]/g, "");
+      if (newKey === oldKey) { e.target.value = oldKey; return; }
+      if (!newKey){
+        showToast("⚠️ 슬롯 키는 영문/숫자로 입력해주세요.");
+        e.target.value = oldKey; return;
+      }
+      if (workingConfig.slots[newKey]){
+        showToast("⚠️ 이미 있는 슬롯 키예요: " + newKey);
+        e.target.value = oldKey; return;
+      }
+      // rebuild slots object in the same order, swapping the key
+      const rebuilt = {};
+      Object.keys(workingConfig.slots).forEach(k => {
+        rebuilt[k === oldKey ? newKey : k] = workingConfig.slots[k];
+      });
+      workingConfig.slots = rebuilt;
+      workingConfig.slotOrder = (workingConfig.slotOrder || []).map(k => k === oldKey ? newKey : k);
+      // keep sentences connected: {{old}} -> {{new}} in both English and Korean templates
+      const pattern = new RegExp("\\{\\{" + oldKey + "\\}\\}", "g");
+      let changedLines = 0;
+      (workingConfig.lines || []).forEach(line => {
+        const before = (line.template||"") + "|" + (line.ko_template||"");
+        if (line.template) line.template = line.template.replace(pattern, "{{" + newKey + "}}");
+        if (line.ko_template) line.ko_template = line.ko_template.replace(pattern, "{{" + newKey + "}}");
+        if (before !== (line.template||"") + "|" + (line.ko_template||"")) changedLines++;
+      });
+      renderLinesEditor();
+      renderSlotsEditor();
+      showToast("✅ 슬롯 키를 '" + oldKey + "' → '" + newKey + "'로 바꿨어요." + (changedLines ? " (문장 " + changedLines + "개도 같이 수정됨)" : ""));
+    });
+  });
   wrap.querySelectorAll(".slot-label").forEach(el => el.addEventListener("input",(e)=>{
     workingConfig.slots[e.target.dataset.key].label = e.target.value;
   }));
