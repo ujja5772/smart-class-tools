@@ -261,15 +261,15 @@
 
     <div class="edit-section">
       <h4>문장 틀 (Key Expressions)</h4>
-      <div class="modal-hint">문장에 <code>&#123;&#123;슬롯키&#125;&#125;</code> 형태로 적으면 그 자리에 슬롯 단어가 들어가요. 예: <code>What did you do &#123;&#123;time&#125;&#125;?</code><br>
-      두 번째 칸은 그 문장의 <b>자연스러운 한글 해석</b>이에요. 예: <code>너 그 &#123;&#123;time&#125;&#125;에는 뭐 했어?</code> (비워두면 해석이 영어 그대로 나와요)</div>
+      <div class="modal-hint">문장에 <code>&#123;&#123;슬롯이름&#125;&#125;</code> 형태로 적으면 그 자리에 뽑힌 단어가 들어가요. 예: <code>What did you do &#123;&#123;시제&#125;&#125;?</code><br>
+      두 번째 칸은 그 문장의 <b>자연스러운 한글 해석</b>이에요. 예: <code>너 그 &#123;&#123;시제&#125;&#125;에는 뭐 했어?</code> (비워두면 해석이 영어 그대로 나와요)</div>
       <div id="linesEditor"></div>
       <button class="small-btn" id="btnAddLine">＋ 문장 추가</button>
     </div>
 
     <div class="edit-section">
       <h4>슬롯 (뽑기 칸) 편집</h4>
-      <div class="modal-hint">슬롯 키는 문장 틀의 &#123;&#123;키&#125;&#125;와 똑같이 맞춰주세요. 영문/숫자로 적어주세요 (예: time, action, feel).<br>슬롯 키 칸을 직접 고치고 Enter(또는 다른 곳 클릭)를 누르면 <b>문장 틀 안의 &#123;&#123;키&#125;&#125;도 자동으로 같이 바뀌어요.</b></div>
+      <div class="modal-hint">슬롯 이름이 곧 문장에 쓰는 이름이에요. 문장 틀에 <code>&#123;&#123;슬롯이름&#125;&#125;</code> 으로 똑같이 적으면 그 자리에 뽑힌 단어가 들어가요. 한글 이름도 OK!<br>이름 칸을 고치고 Enter(또는 다른 곳 클릭)를 누르면 <b>문장 틀 안의 &#123;&#123;이름&#125;&#125;도 자동으로 같이 바뀌어요.</b></div>
       <div id="slotsEditor"></div>
       <div id="addSlotWrap">
         <button class="small-btn add-slot-btn" id="btnAddSlot">＋ 슬롯 추가</button>
@@ -371,10 +371,10 @@ function loadConfig(){
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw){
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.lines && parsed.slots) return parsed;
+      if (parsed && parsed.lines && parsed.slots) return normalizeConfig(parsed);
     }
   }catch(e){ /* ignore corrupt storage */ }
-  return JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  return normalizeConfig(JSON.parse(JSON.stringify(DEFAULT_CONFIG)));
 }
 function saveConfig(cfg){
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); return true; }
@@ -479,8 +479,55 @@ function playStop(){
   });
 }
 
+// A slot is referred to in sentences by its name: {{슬롯이름}}. Spaces just inside
+// the braces are tolerated ({{ 슬롯이름 }}), and Korean/any letters are allowed.
 function substitute(template, replacer){
-  return String(template||"").replace(/\{\{(\w+)\}\}/g, (m,key) => replacer(key));
+  return String(template||"").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (m,key) => replacer(key));
+}
+function sanitizeSlotName(s){
+  return String(s==null?"":s).replace(/[{}"'<>&\\]/g, "").replace(/\s+/g, " ").trim();
+}
+function escapeRegExp(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function renameInLines(lines, oldName, newName){
+  const pattern = new RegExp("\\{\\{\\s*" + escapeRegExp(oldName) + "\\s*\\}\\}", "g");
+  let changed = 0;
+  (lines || []).forEach(line => {
+    const before = (line.template||"") + "|" + (line.ko_template||"");
+    const rep = () => "{{" + newName + "}}";
+    if (line.template) line.template = line.template.replace(pattern, rep);
+    if (line.ko_template) line.ko_template = line.ko_template.replace(pattern, rep);
+    if (before !== (line.template||"") + "|" + (line.ko_template||"")) changed++;
+  });
+  return changed;
+}
+// DOM ids are index-based so slot names can contain Korean, spaces, etc.
+function slotIndex(key){
+  const order = currentConfig.slotOrder || Object.keys(currentConfig.slots);
+  return order.indexOf(key);
+}
+// Older config files had a separate internal "key" and a display "label". Merge them
+// into a single name: the label (what teachers saw) becomes the name used in {{ }}.
+function normalizeConfig(cfg){
+  if (!cfg || !cfg.slots) return cfg;
+  const oldOrder = (cfg.slotOrder && cfg.slotOrder.length ? cfg.slotOrder : Object.keys(cfg.slots)).filter(k => cfg.slots[k]);
+  Object.keys(cfg.slots).forEach(k => { if (oldOrder.indexOf(k) === -1) oldOrder.push(k); });
+  const newSlots = {}, newOrder = [], renames = [];
+  oldOrder.forEach(oldKey => {
+    const slot = cfg.slots[oldKey];
+    let name = sanitizeSlotName(slot.label) || sanitizeSlotName(oldKey) || "slot";
+    let unique = name, n = 2;
+    while (newSlots[unique]) { unique = name + " " + (n++); }
+    slot.label = unique;
+    newSlots[unique] = slot;
+    newOrder.push(unique);
+    if (unique !== oldKey) renames.push([oldKey, unique]);
+  });
+  // rewrite sentences in two passes so swapped names can't collide
+  renames.forEach(([o], i) => renameInLines(cfg.lines, o, "\u0000" + i + "\u0000"));
+  renames.forEach(([, u], i) => renameInLines(cfg.lines, "\u0000" + i + "\u0000", u));
+  cfg.slots = newSlots;
+  cfg.slotOrder = newOrder;
+  return cfg;
 }
 
 // ---------------- main app rendering ----------------
@@ -502,7 +549,7 @@ function renderFrameBox(){
     const roleClass = line.role === "q" ? "q" : "a";
     const body = substitute(line.template, key => {
       const slot = currentConfig.slots[key];
-      return "<u>" + escapeHtml(slot ? slot.label : key) + "</u>";
+      return "<u>" + escapeHtml(key) + "</u>";
     });
     html += '<div class="frame-line"><span class="num '+roleClass+'">'+(i+1)+'</span><span>'+body+'</span></div>';
   });
@@ -524,13 +571,13 @@ function renderReels(){
     const div = document.createElement("div");
     div.className = "reel";
     div.innerHTML =
-      '<div class="reel-label">'+(CIRCLED[idx]||(idx+1)+".")+' '+escapeHtml(slot.label)+'</div>'+
-      '<div class="reel-window" id="win_'+key+'"><div class="reel-content"><span class="big-txt">?</span></div></div>'+
-      '<button class="reel-mini-btn" id="btn_re_'+key+'" disabled>이 칸만 다시 뽑기</button>';
+      '<div class="reel-label">'+(CIRCLED[idx]||(idx+1)+".")+' '+escapeHtml(key)+'</div>'+
+      '<div class="reel-window" id="win_'+idx+'"><div class="reel-content"><span class="big-txt">?</span></div></div>'+
+      '<button class="reel-mini-btn" id="btn_re_'+idx+'" disabled>이 칸만 다시 뽑기</button>';
     wrap.appendChild(div);
   });
   order.forEach(key=>{
-    const btn = document.getElementById("btn_re_"+key);
+    const btn = document.getElementById("btn_re_"+slotIndex(key));
     if (btn) btn.addEventListener("click", ()=> spinSingle(key));
   });
 }
@@ -551,7 +598,7 @@ function renderSlotContent(key, item){
 function spinOne(key, duration, onDone){
   const slot = currentConfig.slots[key];
   const pool = (slot && slot.items) || [];
-  const win = document.getElementById("win_"+key);
+  const win = document.getElementById("win_"+slotIndex(key));
   if (!win) { onDone && onDone(null); return; }
   if (pool.length === 0){
     win.innerHTML = renderSlotContent(key, null);
@@ -579,7 +626,7 @@ function spinOne(key, duration, onDone){
 function setMiniBtns(enabled){
   const order = currentConfig.slotOrder || Object.keys(currentConfig.slots);
   order.forEach(key=>{
-    const btn = document.getElementById("btn_re_"+key);
+    const btn = document.getElementById("btn_re_"+slotIndex(key));
     if (btn) btn.disabled = !enabled;
   });
 }
@@ -738,8 +785,8 @@ function renderLinesEditor(){
     row.style.flexWrap = "wrap";
     row.innerHTML =
       '<select data-i="'+i+'" class="line-role"><option value="q"'+(line.role==="q"?" selected":"")+'>🔴 질문</option><option value="a"'+(line.role==="a"?" selected":"")+'>🟢 대답</option></select>'+
-      '<input type="text" class="line-template" data-i="'+i+'" placeholder="영어 문장 (예: What did you do {{time}}?)" value="'+escapeHtml(line.template)+'">'+
-      '<input type="text" class="line-ko" data-i="'+i+'" placeholder="한글 해석 (자연스러운 전체 문장, 예: 너 그 {{time}}에는 뭐 했어?)" value="'+escapeHtml(line.ko_template||"")+'">'+
+      '<input type="text" class="line-template" data-i="'+i+'" placeholder="영어 문장 (예: What did you do {{시제}}?)" value="'+escapeHtml(line.template)+'">'+
+      '<input type="text" class="line-ko" data-i="'+i+'" placeholder="한글 해석 (자연스러운 전체 문장, 예: 너 그 {{시제}}에는 뭐 했어?)" value="'+escapeHtml(line.ko_template||"")+'">'+
       '<button class="row-del" data-i="'+i+'">✕</button>';
     wrap.appendChild(row);
   });
@@ -776,24 +823,23 @@ function renderSlotsEditor(){
       itemsHtml +=
         '<div class="item-row">'+
         (slot.hasImage ? ('<img class="item-thumb" src="'+(item.img||"")+'" alt="">') : "") +
-        '<input type="text" class="item-en" data-key="'+key+'" data-j="'+j+'" placeholder="영어" value="'+escapeHtml(item.en||"")+'">'+
-        '<input type="text" class="item-ko" data-key="'+key+'" data-j="'+j+'" placeholder="한글 뜻" value="'+escapeHtml(item.ko||"")+'">'+
-        '<input type="text" class="item-hint" data-key="'+key+'" data-j="'+j+'" placeholder="발음 힌트(선택)" value="'+escapeHtml(item.hint||"")+'">'+
-        (slot.hasEmoji ? ('<input type="text" class="item-emo" data-key="'+key+'" data-j="'+j+'" placeholder="이모지" value="'+escapeHtml(item.emo||"")+'" style="max-width:56px;flex:0 0 56px;">') : "") +
-        (slot.hasImage ? ('<label class="small-btn file-btn">사진<input type="file" accept="image/*" class="item-img" data-key="'+key+'" data-j="'+j+'" style="display:none;"></label>') : "") +
-        '<button class="row-del item-del" data-key="'+key+'" data-j="'+j+'">✕</button>'+
+        '<input type="text" class="item-en" data-key="'+escapeHtml(key)+'" data-j="'+j+'" placeholder="영어" value="'+escapeHtml(item.en||"")+'">'+
+        '<input type="text" class="item-ko" data-key="'+escapeHtml(key)+'" data-j="'+j+'" placeholder="한글 뜻" value="'+escapeHtml(item.ko||"")+'">'+
+        '<input type="text" class="item-hint" data-key="'+escapeHtml(key)+'" data-j="'+j+'" placeholder="발음 힌트(선택)" value="'+escapeHtml(item.hint||"")+'">'+
+        (slot.hasEmoji ? ('<input type="text" class="item-emo" data-key="'+escapeHtml(key)+'" data-j="'+j+'" placeholder="이모지" value="'+escapeHtml(item.emo||"")+'" style="max-width:56px;flex:0 0 56px;">') : "") +
+        (slot.hasImage ? ('<label class="small-btn file-btn">사진<input type="file" accept="image/*" class="item-img" data-key="'+escapeHtml(key)+'" data-j="'+j+'" style="display:none;"></label>') : "") +
+        '<button class="row-del item-del" data-key="'+escapeHtml(key)+'" data-j="'+j+'">✕</button>'+
         '</div>';
     });
     block.innerHTML =
       '<div class="slot-head">'+
-        '<label class="slot-key-wrap" title="문장 틀의 {{키}}와 연결되는 이름이에요. 바꾸면 문장 틀도 자동으로 같이 바뀌어요.">슬롯 키 <input type="text" class="slot-key" data-key="'+key+'" value="'+escapeHtml(key)+'" style="max-width:120px;min-width:90px;flex:0 0 auto;font-weight:800;"></label>'+
-        '<input type="text" class="slot-label" data-key="'+key+'" placeholder="화면에 보일 이름" value="'+escapeHtml(slot.label||"")+'">'+
-        '<label><input type="checkbox" class="slot-hasimage" data-key="'+key+'" '+(slot.hasImage?"checked":"")+'> 이미지</label>'+
-        '<label><input type="checkbox" class="slot-hasemoji" data-key="'+key+'" '+(slot.hasEmoji?"checked":"")+'> 이모지</label>'+
-        '<button class="small-btn slot-del" data-key="'+key+'" style="margin-left:auto;background:var(--red);color:#fff;">슬롯 삭제</button>'+
+        '<label class="slot-key-wrap" title="문장 틀에 {{이름}} 으로 쓰는 이름이에요. 바꾸면 문장 틀도 자동으로 같이 바뀌어요.">슬롯 이름 <input type="text" class="slot-key" data-key="'+escapeHtml(key)+'" value="'+escapeHtml(key)+'" placeholder="예: 시제" style="min-width:140px;font-weight:800;"></label>'+
+        '<label><input type="checkbox" class="slot-hasimage" data-key="'+escapeHtml(key)+'" '+(slot.hasImage?"checked":"")+'> 이미지</label>'+
+        '<label><input type="checkbox" class="slot-hasemoji" data-key="'+escapeHtml(key)+'" '+(slot.hasEmoji?"checked":"")+'> 이모지</label>'+
+        '<button class="small-btn slot-del" data-key="'+escapeHtml(key)+'" style="margin-left:auto;background:var(--red);color:#fff;">슬롯 삭제</button>'+
       '</div>'+
       '<div class="slot-items">'+itemsHtml+'</div>'+
-      '<button class="small-btn slot-additem" data-key="'+key+'">＋ 항목 추가</button>';
+      '<button class="small-btn slot-additem" data-key="'+escapeHtml(key)+'">＋ 항목 추가</button>';
     wrap.appendChild(block);
   });
 
@@ -802,40 +848,31 @@ function renderSlotsEditor(){
     el.addEventListener("keydown",(e)=>{ if (e.key === "Enter"){ e.preventDefault(); e.target.blur(); } });
     el.addEventListener("change",(e)=>{
       const oldKey = e.target.dataset.key;
-      const newKey = e.target.value.trim().replace(/[^a-zA-Z0-9_]/g, "");
+      const newKey = sanitizeSlotName(e.target.value);
       if (newKey === oldKey) { e.target.value = oldKey; return; }
       if (!newKey){
-        showToast("⚠️ 슬롯 키는 영문/숫자로 입력해주세요.");
+        showToast("⚠️ 슬롯 이름을 입력해주세요.");
         e.target.value = oldKey; return;
       }
       if (workingConfig.slots[newKey]){
-        showToast("⚠️ 이미 있는 슬롯 키예요: " + newKey);
+        showToast("⚠️ 이미 있는 슬롯 이름이에요: " + newKey);
         e.target.value = oldKey; return;
       }
-      // rebuild slots object in the same order, swapping the key
+      // rebuild slots in the same order with the new name
       const rebuilt = {};
       Object.keys(workingConfig.slots).forEach(k => {
-        rebuilt[k === oldKey ? newKey : k] = workingConfig.slots[k];
+        const target = (k === oldKey) ? newKey : k;
+        rebuilt[target] = workingConfig.slots[k];
+        rebuilt[target].label = target;
       });
       workingConfig.slots = rebuilt;
       workingConfig.slotOrder = (workingConfig.slotOrder || []).map(k => k === oldKey ? newKey : k);
-      // keep sentences connected: {{old}} -> {{new}} in both English and Korean templates
-      const pattern = new RegExp("\\{\\{" + oldKey + "\\}\\}", "g");
-      let changedLines = 0;
-      (workingConfig.lines || []).forEach(line => {
-        const before = (line.template||"") + "|" + (line.ko_template||"");
-        if (line.template) line.template = line.template.replace(pattern, "{{" + newKey + "}}");
-        if (line.ko_template) line.ko_template = line.ko_template.replace(pattern, "{{" + newKey + "}}");
-        if (before !== (line.template||"") + "|" + (line.ko_template||"")) changedLines++;
-      });
+      const changedLines = renameInLines(workingConfig.lines, oldKey, newKey);
       renderLinesEditor();
       renderSlotsEditor();
-      showToast("✅ 슬롯 키를 '" + oldKey + "' → '" + newKey + "'로 바꿨어요." + (changedLines ? " (문장 " + changedLines + "개도 같이 수정됨)" : ""));
+      showToast("✅ '" + oldKey + "' → '" + newKey + "' 로 바꿨어요." + (changedLines ? " (문장 " + changedLines + "개도 같이 수정됨)" : ""));
     });
   });
-  wrap.querySelectorAll(".slot-label").forEach(el => el.addEventListener("input",(e)=>{
-    workingConfig.slots[e.target.dataset.key].label = e.target.value;
-  }));
   wrap.querySelectorAll(".slot-hasimage").forEach(el => el.addEventListener("change",(e)=>{
     workingConfig.slots[e.target.dataset.key].hasImage = e.target.checked;
     renderSlotsEditor();
@@ -892,7 +929,7 @@ document.getElementById("btnAddSlot").addEventListener("click", () => {
   const form = document.createElement("div");
   form.className = "inline-add-form";
   form.innerHTML =
-    '<input type="text" id="newSlotKeyInput" placeholder="슬롯 키 (영문/숫자, 예: place)">'+
+    '<input type="text" id="newSlotKeyInput" placeholder="슬롯 이름 (예: 장소)">'+
     '<button class="mbtn primary" id="newSlotConfirm" type="button">추가</button>'+
     '<button class="mbtn ghost" id="newSlotCancel" type="button">취소</button>'+
     '<span id="newSlotError" style="display:none;color:var(--red);font-weight:700;font-size:12.5px;"></span>';
@@ -902,10 +939,10 @@ document.getElementById("btnAddSlot").addEventListener("click", () => {
 
   function closeForm(){ form.remove(); }
   function tryAdd(){
-    let key = input.value.trim().replace(/[^a-zA-Z0-9_]/g, "");
+    let key = sanitizeSlotName(input.value);
     const errEl = document.getElementById("newSlotError");
-    if (!key){ errEl.textContent = "영문/숫자로 입력해주세요."; errEl.style.display = "inline"; return; }
-    if (workingConfig.slots[key]){ errEl.textContent = "이미 있는 슬롯 키예요."; errEl.style.display = "inline"; return; }
+    if (!key){ errEl.textContent = "이름을 입력해주세요."; errEl.style.display = "inline"; return; }
+    if (workingConfig.slots[key]){ errEl.textContent = "이미 있는 슬롯 이름이에요."; errEl.style.display = "inline"; return; }
     workingConfig.slots[key] = {label:key, hasImage:false, hasEmoji:false, items:[]};
     workingConfig.slotOrder = workingConfig.slotOrder || [];
     workingConfig.slotOrder.push(key);
@@ -950,7 +987,7 @@ document.getElementById("btnEditSave").addEventListener("click", () => {
 
 document.getElementById("btnResetDefault").addEventListener("click", (e) => {
   armDangerConfirm(e.currentTarget, "정말요? (한번 더 클릭)", () => {
-    currentConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+    currentConfig = normalizeConfig(JSON.parse(JSON.stringify(DEFAULT_CONFIG)));
     saveConfig(currentConfig);
     editModal.classList.add("hidden");
     renderApp();
@@ -978,7 +1015,7 @@ document.getElementById("importFile").addEventListener("change", (e) => {
     try{
       const parsed = JSON.parse(ev.target.result);
       if (!parsed.lines || !parsed.slots) throw new Error("형식이 올바르지 않아요.");
-      workingConfig = parsed;
+      workingConfig = normalizeConfig(parsed);
       document.getElementById("editTitle").value = workingConfig.title || "";
       renderLinesEditor();
       renderSlotsEditor();
@@ -1017,7 +1054,7 @@ async function tryLoadFromUrlParam(){
     const text = await res.text();
     const parsed = JSON.parse(text);
     if (!parsed.lines || !parsed.slots) throw new Error("설정 파일 형식이 올바르지 않아요.");
-    currentConfig = parsed;
+    currentConfig = normalizeConfig(parsed);
     return true;
   }catch(e){
     console.warn("config link load failed:", e);
